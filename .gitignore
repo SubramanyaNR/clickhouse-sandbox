@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .env
+BLOG.html
+BLOG.md
+blog-diagram.png
