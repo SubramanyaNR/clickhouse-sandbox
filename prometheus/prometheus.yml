@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: clickhouse-sandbox
+
+rule_files:
+  - rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  # Both servers and keepers serve /metrics natively on 9363; no exporter.
+  - job_name: clickhouse
+    static_configs:
+      - targets: [ch-server1:9363, ch-server2:9363, ch-server3:9363]
+
+  - job_name: clickhouse-keeper
+    static_configs:
+      - targets: [ch-keeper1:9363, ch-keeper2:9363, ch-keeper3:9363]

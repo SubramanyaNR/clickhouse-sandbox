@@ -1,0 +1,46 @@
+<clickhouse>
+    <logger>
+        <level>information</level>
+        <console>1</console>
+    </logger>
+
+    <listen_host>0.0.0.0</listen_host>
+
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id from_env="KEEPER_ID"/>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+            <raft_logs_level>warning</raft_logs_level>
+        </coordination_settings>
+
+        <raft_configuration>
+            <server><id>1</id><hostname>ch-keeper1</hostname><port>9234</port></server>
+            <server><id>2</id><hostname>ch-keeper2</hostname><port>9234</port></server>
+            <server><id>3</id><hostname>ch-keeper3</hostname><port>9234</port></server>
+        </raft_configuration>
+
+        <!-- /ready returns 200 once this node is in a quorum with a leader. -->
+        <http_control>
+            <port>9182</port>
+            <readiness>
+                <endpoint>/ready</endpoint>
+            </readiness>
+        </http_control>
+
+        <!-- ruok, mntr, stat and friends, used by bin/ch keeper -->
+        <four_letter_word_white_list>*</four_letter_word_white_list>
+    </keeper_server>
+
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+    </prometheus>
+</clickhouse>

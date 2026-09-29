@@ -1,0 +1,21 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://ch-prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+
+  - name: ClickHouse
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    jsonData:
+      host: ch-server1
+      port: 9000
+      protocol: native
+      username: default
+      defaultDatabase: bank

@@ -1,0 +1,71 @@
+groups:
+  - name: clickhouse
+    rules:
+      - alert: ClickHouseServerDown
+        expr: up{job="clickhouse"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "ClickHouse server {{ $labels.instance }} is not responding"
+          description: "Its shard replicas are served by the other copy, if the layout has one."
+
+      # Read-only means the replica lost its Keeper session. Inserts into its
+      # tables fail until it reconnects.
+      - alert: ClickHouseReplicaReadonly
+        expr: ClickHouseMetrics_ReadonlyReplica > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} read-only replicas on {{ $labels.instance }}"
+          description: "Check Keeper quorum and the server's connection to it."
+
+      - alert: ClickHouseReplicationLag
+        expr: ClickHouseAsyncMetrics_ReplicasMaxAbsoluteDelay > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Replica on {{ $labels.instance }} is {{ $value }}s behind"
+          description: "Look at system.replication_queue for stuck fetches or merges."
+
+      # Too many parts is the classic self-inflicted outage: many small
+      # inserts outrun merges, and past parts_to_throw_insert inserts fail.
+      - alert: ClickHouseTooManyParts
+        expr: ClickHouseAsyncMetrics_MaxPartCountForPartition > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} parts in one partition on {{ $labels.instance }}"
+          description: "Batch inserts or use async_insert; merges are not keeping up."
+
+      - alert: ClickHouseDistributedBacklog
+        expr: ClickHouseMetrics_DistributedFilesToInsert > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} queued Distributed insert files on {{ $labels.instance }}"
+          description: "Background sends to a shard are failing or slow. Is a shard down?"
+
+  - name: clickhouse-keeper
+    rules:
+      - alert: KeeperNodeDown
+        expr: up{job="clickhouse-keeper"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Keeper {{ $labels.instance }} is down"
+          description: "Quorum survives one lost node out of three. A second loss makes every replicated table read-only."
+
+      - alert: KeeperNoLeader
+        expr: sum(ClickHouseAsyncMetrics_KeeperIsLeader) < 1
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keeper ensemble has no leader"
+          description: "Quorum is lost. Replicated tables are read-only."

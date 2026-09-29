@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Helper for the ClickHouse sandbox. Run from the repo root: bin/ch <command>
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+SERVERS=(ch-server1 ch-server2 ch-server3)
+KEEPERS=(ch-keeper1 ch-keeper2 ch-keeper3)
+
+running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }
+
+# First running server, so commands keep working while break scenarios have
+# one stopped.
+any_server() {
+  for s in "${SERVERS[@]}"; do running "$s" && { echo "$s"; return; }; done
+  echo "no ClickHouse server is running" >&2; exit 1
+}
+
+client() { local s=$1; shift; docker exec -i "$s" clickhouse-client "$@"; }
+
+cmd_schema() {
+  local pairs
+  pairs=$(client "$(any_server)" -q "SELECT host_name, shard_num FROM system.clusters WHERE cluster = 'bank' ORDER BY host_name, shard_num")
+  for s in "${SERVERS[@]}"; do
+    local dbs first
+    dbs=$(awk -v h="$s" '$1 == h { printf "shard_%02d\n", $2 }' <<<"$pairs")
+    [ -z "$dbs" ] && continue
+    for db in $dbs; do
+      sed "s/{db}/$db/g" schema/local.sql | client "$s" --multiquery
+      echo "$s: $db"
+    done
+    first=$(head -1 <<<"$dbs")
+    sed "s/{any_db}/$first/g" schema/distributed.sql | client "$s" --multiquery
+    echo "$s: bank (distributed)"
+  done
+}
+
+cmd_load() {
+  local days=${1:-90}
+  docker compose --profile tools build bankgen >/dev/null
+  docker compose --profile tools run --rm -T bankgen generate "$days"
+  local server
+  server=$(any_server)
+  for table in customers accounts loans transactions loan_applications clickstream application_logs call_center_events; do
+    local topic
+    case $table in
+      clickstream|application_logs) topic=bank.app.$table ;;
+      call_center_events)           topic=bank.$table ;;
+      *)                            topic=bank.dbo.$table ;;
+    esac
+    # insert_distributed_sync makes the insert wait until every shard has its
+    # rows, so the counts printed below are final rather than in flight.
+    docker compose --profile tools run --rm -T bankgen "$topic" 2>/dev/null \
+      | client "$server" --insert_distributed_sync=1 -q "INSERT INTO bank.$table FORMAT JSONEachRow"
+    printf '%-20s %s rows\n' "$table" "$(client "$server" -q "SELECT count() FROM bank.$table")"
+  done
+  client "$server" -q "SYSTEM RELOAD DICTIONARY bank.customer_dict"
+}
+
+cmd_cluster() {
+  local server
+  server=$(any_server)
+  echo "servers"
+  for s in "${SERVERS[@]}"; do
+    running "$s" && echo "  $s up" || echo "  $s DOWN"
+  done
+  echo
+  echo "keepers"
+  for k in "${KEEPERS[@]}"; do
+    if running "$k"; then
+      echo "  $k $(docker exec "$k" sh -c 'echo srvr | nc 127.0.0.1 9181' | awk '/Mode/ {print $2}')"
+    else
+      echo "  $k DOWN"
+    fi
+  done
+  echo
+  client "$server" --format PrettyCompactMonoBlock -q "
+    SELECT shard_num AS shard, replica_num AS replica, host_name AS host, default_database AS db
+    FROM system.clusters WHERE cluster = 'bank' ORDER BY shard, replica"
+  # skip_unavailable_shards lets this report on the survivors when a server is down.
+  client "$server" --format PrettyCompactMonoBlock --skip_unavailable_shards=1 -q "
+    SELECT hostName() AS host, database, table, is_readonly AS readonly, queue_size AS queue,
+           absolute_delay AS delay_s, active_replicas || '/' || total_replicas AS replicas
+    FROM clusterAllReplicas(every_node, system.replicas)
+    WHERE table = 'transactions'
+    ORDER BY database, host"
+}
+
+cmd_query() {
+  local server
+  server=$(any_server)
+  if [ -f "${1:-}" ]; then
+    client "$server" --format PrettyCompactMonoBlock --multiquery < "$1"
+  else
+    client "$server" --format PrettyCompactMonoBlock -q "$*"
+  fi
+}
+
+cmd_shell() {
+  docker exec -it "ch-server${1:-1}" clickhouse-client
+}
+
+case "${1:-}" in
+  schema)  cmd_schema ;;
+  load)    shift; cmd_load "$@" ;;
+  cluster) cmd_cluster ;;
+  query)   shift; cmd_query "$@" ;;
+  shell)   shift; cmd_shell "$@" ;;
+  *)
+    echo "usage: bin/ch schema | load [days] | cluster | query <sql|file> | shell [1|2|3]" >&2
+    exit 1 ;;
+esac

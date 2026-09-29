@@ -1,0 +1,27 @@
+digraph G {
+  rankdir=TB; bgcolor="white"; nodesep=0.3; ranksep=0.5;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11,
+        color="#cfcfcf", fillcolor="#f6f6f6", margin="0.18,0.11"];
+  edge [fontname="Helvetica", fontsize=10, color="#767676", fontcolor="#767676"];
+
+  cli [label="client — query bank.*", fillcolor="#e8f0fb", color="#9db8e0"];
+
+  subgraph cluster_srv {
+    label="3 servers · 3 shards · 2 copies each (circular)";
+    fontname="Helvetica"; fontsize=11; color="#d8d8d8"; style="rounded";
+    s1 [label="ch-server1\nshard_01 r1 · shard_03 r2"];
+    s2 [label="ch-server2\nshard_01 r2 · shard_02 r1"];
+    s3 [label="ch-server3\nshard_02 r2 · shard_03 r1"];
+  }
+
+  kp [label="ClickHouse Keeper — 3 nodes, Raft quorum\ncoordinates replication only"];
+
+  ro [label="lose 2 of 3 keepers\n\nreplicas go READ-ONLY\ninserts fail · SELECTs unaffected",
+      fillcolor="#fdecea", color="#e0a19d"];
+
+  cli -> s1 [label="  Distributed\l  table fans out\l"];
+  cli -> s2;
+  cli -> s3;
+  s1 -> kp; s2 -> kp; s3 -> kp;
+  kp -> ro [style=dashed, color="#c0392b"];
+}

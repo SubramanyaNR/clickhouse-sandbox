@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Failure scenarios for the ClickHouse sandbox. Each one breaks something,
+# shows what still works, and leaves it broken until `bin/break heal`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+ch() { bin/ch query "$@"; }
+step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+try_insert() {
+  local server=$1 err
+  err=$(mktemp)
+  if docker exec "$server" clickhouse-client --distributed_foreground_insert=1 -q "
+      INSERT INTO bank.call_center_events (ticket_id, customer_id, intent, category, channel, status,
+                                           resolution, handle_time_min, opened_at, event_time, event_date)
+      VALUES ('TK-break-' || toString(rand()), 'C-100001', 'complaint', 'service', 'phone', 'open',
+              'pending', 0, now(), now(), today())" 2>"$err"; then
+    echo "insert: ok"
+  else
+    echo "insert: FAILED - $(sed -n 's/.*DB::Exception: \([^(]*\).*/\1/p' "$err" | head -1)"
+  fi
+}
+
+scenario_server() {
+  local n=${1:-2}
+  step "stopping ch-server$n"
+  docker stop "ch-server$n" >/dev/null
+
+  step "every shard still has a live replica, so reads cover all the data"
+  ch "SELECT count() AS transactions, uniq(customer_id) AS customers FROM bank.transactions"
+
+  step "writes route to the surviving replica of each shard"
+  try_insert ch-server1 2>/dev/null || try_insert ch-server3
+
+  step "replica state on the survivors"
+  bin/ch cluster | tail -10
+  echo
+  echo "bin/break heal brings it back; watch it catch up with bin/ch cluster"
+}
+
+scenario_keeper() {
+  step "stopping ch-keeper1: two of three keepers remain, quorum holds"
+  docker stop ch-keeper1 >/dev/null
+  sleep 5
+  try_insert ch-server1
+
+  step "stopping ch-keeper2 as well: quorum lost"
+  docker stop ch-keeper2 >/dev/null
+  # Replicas notice on their next Keeper request or session timeout.
+  sleep 15
+  try_insert ch-server1
+
+  step "reads do not need Keeper"
+  ch "SELECT count() FROM bank.transactions"
+
+  step "replicated tables are read-only until quorum returns"
+  ch "SELECT hostName() AS host, database, table, is_readonly, is_session_expired
+      FROM clusterAllReplicas(every_node, system.replicas)
+      WHERE table = 'transactions' ORDER BY database, host"
+}
+
+scenario_catchup() {
+  step "stopping ch-server2, then writing while it is away"
+  docker stop ch-server2 >/dev/null
+  docker exec ch-server1 clickhouse-client --distributed_foreground_insert=1 -q "
+    INSERT INTO bank.transactions
+    SELECT generateUUIDv4() AS txn_id, account_id, customer_id, loan_id, amount, currency, txn_type,
+           merchant_category, channel, status, failure_reason, now64(3) AS event_time, today() AS event_date
+    FROM bank.transactions LIMIT 200000"
+  ch "SELECT hostName() AS host, _database AS db, count() AS rows
+      FROM clusterAllReplicas(every_node, merge(REGEXP('^shard_0[12]\$'), '^transactions\$'))
+      GROUP BY host, db ORDER BY db, host
+      SETTINGS skip_unavailable_shards = 1"
+
+  step "starting ch-server2 and watching its replicas fetch the missing parts"
+  docker start ch-server2 >/dev/null
+  until docker exec ch-server2 clickhouse-client -q "SELECT 1" >/dev/null 2>&1; do sleep 1; done
+  for _ in $(seq 1 20); do
+    local out
+    out=$(docker exec ch-server2 clickhouse-client -q "
+      SELECT sum(queue_size), max(absolute_delay) FROM system.replicas WHERE table = 'transactions'")
+    echo "ch-server2 replication queue / max delay (s): $out"
+    [ "$(cut -f1 <<<"$out")" = 0 ] && break
+    sleep 2
+  done
+  ch "SELECT hostName() AS host, _database AS db, count() AS rows
+      FROM clusterAllReplicas(every_node, merge(REGEXP('^shard_0[12]\$'), '^transactions\$'))
+      GROUP BY host, db ORDER BY db, host"
+}
+
+heal() {
+  docker start ch-keeper1 ch-keeper2 ch-keeper3 ch-server1 ch-server2 ch-server3 >/dev/null
+  until [ "$(docker inspect -f '{{.State.Health.Status}}' ch-keeper1 ch-keeper2 ch-keeper3 ch-server1 ch-server2 ch-server3 | sort -u)" = healthy ]; do sleep 2; done
+  bin/ch cluster
+}
+
+case "${1:-}" in
+  server)  scenario_server "${2:-2}" ;;
+  keeper)  scenario_keeper ;;
+  catchup) scenario_catchup ;;
+  heal)    heal ;;
+  *)
+    cat >&2 <<USAGE
+usage: bin/break server [1|2|3]   stop a server, show reads and writes still work
+       bin/break keeper           lose one keeper (fine), then two (read-only)
+       bin/break catchup          write while a replica is down, watch it catch up
+       bin/break heal             start everything again
+USAGE
+    exit 1 ;;
+esac

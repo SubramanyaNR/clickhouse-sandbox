@@ -1,0 +1,13 @@
+# Joins the shared streaming-net network, where kafka-sandbox brokers are
+# ks-kafka{1,2,3}:9092 and other stacks reach these servers as
+# ch-server{1,2,3}:8123 / :9000. Create the network once with
+#   docker network create streaming-net
+services:
+  server1: {networks: [sandbox, streaming]}
+  server2: {networks: [sandbox, streaming]}
+  server3: {networks: [sandbox, streaming]}
+
+networks:
+  streaming:
+    name: streaming-net
+    external: true

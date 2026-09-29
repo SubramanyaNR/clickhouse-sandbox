@@ -1,0 +1,45 @@
+<!-- 1 shard x 3 replicas. Full copy everywhere, no scale-out. -->
+<clickhouse>
+    <remote_servers>
+        <bank>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>ch-server1</host>
+                    <port>9000</port>
+                    <default_database>shard_01</default_database>
+                </replica>
+                <replica>
+                    <host>ch-server2</host>
+                    <port>9000</port>
+                    <default_database>shard_01</default_database>
+                </replica>
+                <replica>
+                    <host>ch-server3</host>
+                    <port>9000</port>
+                    <default_database>shard_01</default_database>
+                </replica>
+            </shard>
+        </bank>
+        <every_node>
+            <shard>
+                <replica>
+                    <host>ch-server1</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>ch-server2</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>ch-server3</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </every_node>
+    </remote_servers>
+</clickhouse>

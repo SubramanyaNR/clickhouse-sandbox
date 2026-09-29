@@ -1,0 +1,52 @@
+<!-- 3 shards x 1 replica. Scale-out with no redundancy: lose a server and a
+     third of the data is unreadable. -->
+<clickhouse>
+    <remote_servers>
+        <bank>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>ch-server1</host>
+                    <port>9000</port>
+                    <default_database>shard_01</default_database>
+                </replica>
+            </shard>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>ch-server2</host>
+                    <port>9000</port>
+                    <default_database>shard_02</default_database>
+                </replica>
+            </shard>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>ch-server3</host>
+                    <port>9000</port>
+                    <default_database>shard_03</default_database>
+                </replica>
+            </shard>
+        </bank>
+        <every_node>
+            <shard>
+                <replica>
+                    <host>ch-server1</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>ch-server2</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>ch-server3</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </every_node>
+    </remote_servers>
+</clickhouse>
