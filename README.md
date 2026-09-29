@@ -157,23 +157,6 @@ Alert rules (`prometheus/rules/clickhouse.yml`): server down, read-only
 replica, replication lag, too many parts, Distributed insert backlog, keeper
 down, no Keeper leader.
 
-## Reading from kafka-sandbox
-
-With [kafka-sandbox](../kafka-sandbox) running, start both in linked mode and
-create Kafka engine tables:
-
-```bash
-(cd ../kafka-sandbox && make linked)
-make linked
-make kafka          # consume bank.dbo.transactions into bank.transactions
-make kafka-stop
-```
-
-Each server gets a Kafka engine table in the same consumer group, so the six
-partitions are split across three servers, and each materialized view writes
-through the Distributed table, which re-shards by customer. Consumption is
-visible as the `clickhouse-bank-transactions` group in Kafbat UI, and the
-state of each consumer in `system.kafka_consumers`.
 
 ## Stop
 
